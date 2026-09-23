@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+body{font:14px system-ui;max-width:560px;margin:24px auto;padding:0 16px}
+label{display:block;margin:12px 0 4px;font-weight:600}
+input[type=text],input[type=password]{width:100%;padding:8px}
+textarea{width:100%;height:140px;font-size:13px}
+button{padding:9px 16px;margin-top:14px;font-weight:600;cursor:pointer}
+.hint{color:#555;font-size:12px}
+#resumeStatus{white-space:pre-wrap;background:#f4f4f4;padding:10px;border-radius:8px;margin-top:8px}
+hr{margin:24px 0}
+</style></head>
+<body>
+<h2>Resume Autofill: Resume + Settings</h2>
+<p class="hint">Upload here (not in the popup). The popup closes when the file picker opens. This page stays open, so Browse works.</p>
+<label>1. Resume file (PDF / DOCX / TXT / MD / HTML)</label>
+<input type="file" id="resumeFile" accept=".txt,.md,.pdf,.docx,.html">
+<div id="fileInfo" class="hint"></div>
+<label>…or paste resume text (always works: open PDF → Ctrl+A → Ctrl+C → Ctrl+V here)</label>
+<textarea id="resumePaste" placeholder="Paste resume text here"></textarea>
+<button id="saveResume">Save resume → build profile</button>
+<div id="resumeStatus">Loading…</div>
+<hr>
+<label><input type="checkbox" id="learnFromEdits"> Learn from my manual corrections (per site, your fixes win next time)</label>
+<label>Learned corrections (<span id="learnedCount">0</span>)</label>
+<div id="learnedList" class="hint">Nothing learned yet.</div>
+<button id="clearLearned">Forget all learned corrections</button>
+<hr>
+<label><input type="checkbox" id="autoFill"> Auto-fill forms on load (you still review + submit)</label>
+<button id="save">Save settings</button> <span id="status"></span>
+<script src="../lib/vendor/pdf.js"></script>
+<script src="../lib/vendor/mammoth.browser.min.js"></script>
+<script src="../lib/profile.js"></script>
+<script src="options.js"></script>
+</body></html>

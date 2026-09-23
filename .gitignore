@@ -1,0 +1,16 @@
+# Personal data / local fixtures. NEVER ship or commit
+profiles/
+*.xpi
+
+# Build output
+web-ext-artifacts/
+.amo-upload-uuid
+
+# Deps
+node_modules/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
