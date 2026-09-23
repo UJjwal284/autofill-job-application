@@ -1,6 +1,6 @@
 {
   "name": "resume-autofill-for-job-applications",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Firefox extension: save your resume once, job application forms fill themselves. 100% local, no tracking.",
   "scripts": {
     "lint": "web-ext lint",

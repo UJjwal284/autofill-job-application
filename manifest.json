@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Resume Autofill for Job Applications",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Save your resume once. Job application forms fill themselves. Fully local, no account, no tracking.",
   "permissions": ["storage"],
   "background": {
