@@ -1,9 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Resume Autofill for Job Applications",
-  "version": "1.0.1",
+  "version": "1.2.0",
   "description": "Save your resume once. Job application forms fill themselves. Fully local, no account, no tracking.",
-  "permissions": ["storage"],
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
   "background": {
     "scripts": ["src/background/background.js"]
   },
@@ -27,10 +30,20 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["src/lib/profile.js", "src/content/content.js"],
+      "js": [
+        "src/lib/profile.js",
+        "src/lib/llm.js",
+        "src/content/content.js"
+      ],
       "run_at": "document_idle",
-      "all_frames": false
+      "all_frames": true
     }
+  ],
+  "optional_host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://*/*",
+    "http://*/*"
   ],
   "browser_specific_settings": {
     "gecko": {

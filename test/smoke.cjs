@@ -1,4 +1,4 @@
-/* Smoke test: resume parser + field mapping. Run: npm test (node, no deps). */
+/* Smoke test: resume parser + LLM-grade field brain. Run: npm test (node, no deps). */
 const assert = require("node:assert/strict");
 const ResumeAutofill = require("../src/lib/profile.js");
 
@@ -11,9 +11,10 @@ Skills: AWS, Kubernetes, Terraform, Python, Docker, Jenkins, Git, Linux
 `;
 
 const profile = ResumeAutofill.parseResumeText(SAMPLE);
-assert.equal(profile.version, 1);
+assert.equal(profile.version, 2);
 assert.equal(profile.personal.fullName, "Jane Marie Doe");
 assert.equal(profile.personal.firstName, "Jane");
+assert.equal(profile.personal.middleName, "Marie");
 assert.equal(profile.personal.email, "jane.doe@example.com");
 assert.match(profile.personal.phone, /170/);
 assert.equal(profile.personal.location, "Berlin, Germany");
@@ -34,8 +35,35 @@ assert.ok(map("Skills").value.toLowerCase().includes("kubernetes"));
 assert.equal(map("Some random unknown field xyz").value, "");
 assert.equal(map("Some random unknown field xyz").confidence, 0.1);
 // Sensitive-field skipping lives in content.js (SKIP_RE), not the mapper.
-// The mapper must simply not crash on such labels:
 assert.doesNotThrow(() => map("Password"));
 assert.doesNotThrow(() => map("Credit card number"));
+
+// --- new signal-based brain: name/id/autocomplete/testId, ATS quirks ---
+const analyze = (s) => ResumeAutofill.analyzeField(s, profile);
+assert.equal(analyze({label: "", name: "fname"}).key, "firstName");
+assert.equal(analyze({label: "", name: "fname"}).value, "Jane");
+assert.equal(analyze({label: "", name: "job_application[first_name]"}).key, "firstName");
+assert.equal(analyze({label: "", name: "lname", id: "last"}).value, "Doe");
+assert.equal(analyze({label: "", autocomplete: "email"}).value, "jane.doe@example.com");
+assert.equal(analyze({label: "Email", autocomplete: "email"}).confidence >= 0.98, true);
+assert.equal(analyze({label: "Vorname"}).key, "firstName");
+assert.equal(analyze({label: "Nachname"}).key, "lastName");
+assert.equal(analyze({label: "LinkedIn profile"}).key, "linkedin");
+assert.equal(analyze({label: "", name: "", testId: "phone-number"}).key, "phone");
+assert.equal(analyze({label: "", name: "city"}).key, "city");
+assert.equal(analyze({label: "Are you authorized to work in the US?"}).key, "auth");
+assert.equal(analyze({label: "Will you require sponsorship?"}).key, "sponsorship");
+// generative fields are flagged, not silently empty
+const cover = analyze({label: "Cover letter"});
+assert.equal(cover.key, "coverLetter");
+assert.equal(cover.generative, true);
+assert.ok(cover.needsLLM);
+// skips
+assert.equal(analyze({label: "Password", name: "pwd", type: "password"}).skip, true);
+assert.equal(analyze({label: "Search jobs", name: "q"}).skip, true);
+// local composer (built-in tiny LLM) always produces a draft
+const draft = ResumeAutofill.composeFreeText("coverLetter", profile);
+assert.ok(draft.includes("Jane Marie Doe"));
+assert.ok(draft.length > 50);
 
 console.log("smoke: all assertions passed");

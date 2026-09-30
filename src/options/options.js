@@ -39,6 +39,14 @@ const storeSet = (items) => withStoreTimeout(store().set(items), 10000, "set");
 const storeGet = (keys) => withStoreTimeout(store().get(keys), 10000, "get");
 const storeRemove = (keys) => withStoreTimeout(store().remove(keys), 10000, "remove");
 
+const normalize = (h) => {
+    try {
+        return globalThis.ResumeAutofill?.normalizeDomain ? globalThis.ResumeAutofill.normalizeDomain(h) : String(h || "").toLowerCase().replace(/^www\./, "").trim();
+    } catch {
+        return "";
+    }
+};
+
 async function refreshAll() {
   // Self-test storage first so failures are visible instead of silent empty fields.
   await storeSet({ __ping: Date.now() });
@@ -50,7 +58,13 @@ async function refreshAll() {
   // Guarded: old cached HTML may lack new IDs. Never let one missing node kill the whole page.
   if ($("autoFill")) $("autoFill").checked = s.autoFill !== false;
   if ($("learnFromEdits")) $("learnFromEdits").checked = s.learnFromEdits !== false;
+    if ($("fillGenerative")) $("fillGenerative").checked = s.fillGenerative !== false;
+    if ($("useLLM")) $("useLLM").checked = s.useLLM === true;
+    if ($("llmUrl")) $("llmUrl").value = s.llmUrl || "";
+    if ($("llmModel")) $("llmModel").value = s.llmModel || "";
+    if ($("llmKey")) $("llmKey").value = s.llmKey || "";
   renderLearned(learned || {});
+    renderDisabled(s.disabledSites || []);
   const pdfOk = !!globalThis.pdfjsLib?.getDocument, mOk = !!globalThis.mammoth?.extractRawText;
   const pOk = !!globalThis.ResumeAutofill?.parseResumeText;
   const engines = `Engines: PDF ${pdfOk ? "OK" : "MISSING"} | DOCX ${mOk ? "OK" : "MISSING"} | Profile ${pOk ? "OK" : "MISSING"}`;
@@ -163,6 +177,73 @@ function renderLearned(learned) {
   }
 }
 
+function renderDisabled(disabledSites) {
+    const list = (disabledSites || []).map(normalize).filter(Boolean);
+    const uniq = [...new Set(list)].sort();
+    if ($("disabledCount")) $("disabledCount").textContent = String(uniq.length);
+    const box = $("disabledList");
+    if (!box) return;
+    if (!uniq.length) {
+        box.textContent = "Not disabled anywhere.";
+        return;
+    }
+    box.innerHTML = "";
+    for (const d of uniq.slice(0, 100)) {
+        const div = document.createElement("div");
+        div.style.cssText = "background:#fff;border:1px solid #ddd;border-radius:6px;padding:6px 8px;margin:4px 0;display:flex;gap:8px;align-items:center;justify-content:space-between";
+        const span = document.createElement("span");
+        span.textContent = d;
+        span.style.wordBreak = "break-all";
+        const btn = document.createElement("button");
+        btn.textContent = "Enable";
+        btn.style.cssText = "margin:0;padding:4px 10px";
+        btn.onclick = async () => {
+            try {
+                const cur = (await storeGet("settings"))?.settings || {};
+                cur.disabledSites = (cur.disabledSites || []).map(normalize).filter(x => x && x !== d);
+                await storeSet({settings: cur});
+                renderDisabled(cur.disabledSites);
+                if ($("status")) $("status").textContent = `Enabled on ${d}.`;
+            } catch (e) {
+                if ($("status")) $("status").textContent = "Remove failed: " + (e?.message || e);
+            }
+        };
+        div.appendChild(span);
+        div.appendChild(btn);
+        box.appendChild(div);
+    }
+}
+
+async function addDisabled(raw) {
+    const d = normalize(raw);
+    if (!d) {
+        if ($("status")) $("status").textContent = "Enter a domain like example.com.";
+        return;
+    }
+    try {
+        const cur = (await storeGet("settings"))?.settings || {};
+        const set = new Set((cur.disabledSites || []).map(normalize).filter(Boolean));
+        set.add(d);
+        cur.disabledSites = [...set].sort();
+        await storeSet({settings: cur});
+        renderDisabled(cur.disabledSites);
+        if ($("disabledInput")) $("disabledInput").value = "";
+        if ($("status")) $("status").textContent = `Disabled on ${d}. Autofill will skip it.`;
+    } catch (e) {
+        if ($("status")) $("status").textContent = "Add failed: " + (e?.message || e);
+    }
+}
+
+const addDisabledBtn = $("addDisabled");
+if (addDisabledBtn) addDisabledBtn.onclick = () => addDisabled($("disabledInput")?.value);
+const disabledInputEl = $("disabledInput");
+if (disabledInputEl) disabledInputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+        e.preventDefault();
+        addDisabled(disabledInputEl.value);
+    }
+});
+
 const clearBtn = $("clearLearned");
 if (clearBtn) clearBtn.onclick = async () => {
   try { await storeSet({ learned: {} }); renderLearned({}); if ($("resumeStatus")) $("resumeStatus").textContent = "Forgot all learned corrections."; }
@@ -172,9 +253,33 @@ if (clearBtn) clearBtn.onclick = async () => {
 const saveBtn = $("save");
 if (saveBtn) saveBtn.onclick = async () => {
   try {
+      const prev = (await storeGet("settings"))?.settings || {};
     const payload = { settings: {
-      autoFill: $("autoFill")?.checked !== false, learnFromEdits: $("learnFromEdits")?.checked !== false
+            ...prev,
+            autoFill: $("autoFill")?.checked !== false,
+            learnFromEdits: $("learnFromEdits")?.checked !== false,
+            fillGenerative: $("fillGenerative")?.checked !== false,
+            useLLM: $("useLLM")?.checked === true,
+            llmUrl: $("llmUrl")?.value.trim() || "",
+            llmModel: $("llmModel")?.value.trim() || "",
+            llmKey: $("llmKey")?.value || ""
     }};
+      if (payload.settings.useLLM && !payload.settings.llmUrl) {
+          $("status").textContent = "Set the endpoint URL first (e.g. http://localhost:11434 for Ollama).";
+          return;
+      }
+      // Cloud endpoints need an optional host permission; ask up front so fills don't fail silently.
+      if (payload.settings.useLLM && payload.settings.llmUrl && !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(payload.settings.llmUrl)) {
+          try {
+              const origin = new URL(payload.settings.llmUrl).origin + "/*";
+              const granted = await extApi?.permissions?.request?.({origins: [origin]});
+              if (granted === false) {
+                  $("status").textContent = "Browser refused host permission for the endpoint. Local drafting still works.";
+                  return;
+              }
+          } catch {
+          }
+      }
     await storeSet(payload);
     // Read-back: proves it actually persisted (catches private-mode / removed-addon / file:// issues).
     const check = await storeGet("settings");
@@ -191,3 +296,41 @@ refreshAll().catch(e => {
   const el = $("resumeStatus");
   if (el) el.textContent = "Load error: " + (e?.message || e);
 });
+
+const testLLMBtn = $("testLLM");
+if (testLLMBtn) testLLMBtn.onclick = async () => {
+    const st = $("llmStatus");
+    try {
+        if (st) st.textContent = "Testing…";
+        const url = ($("llmUrl")?.value || "").trim().replace(/\/$/, "");
+        if (!url) {
+            if (st) st.textContent = "Set the endpoint URL first.";
+            return;
+        }
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 10000);
+        // Prefer OpenAI-compatible /v1/models; fall back to Ollama /api/tags.
+        let ok = false, detail = "";
+        try {
+            const r = await fetch(url + "/v1/models", {
+                signal: ctrl.signal,
+                headers: $("llmKey")?.value ? {Authorization: "Bearer " + $("llmKey").value} : {}
+            });
+            ok = r.ok;
+            detail = `GET /v1/models → ${r.status}${r.status === 401 ? " (key missing/invalid — paste your OpenRouter key)" : ""}`;
+        } catch (e) {
+            try {
+                const r2 = await fetch(url + "/api/tags", {signal: ctrl.signal});
+                ok = r2.ok;
+                detail = `GET /api/tags → ${r2.status}`;
+            } catch (e2) {
+                detail = String(e2?.message || e2);
+            }
+        } finally {
+            clearTimeout(t);
+        }
+        if (st) st.textContent = ok ? `Connected ✓ (${detail}). Save settings to use it.` : `Not reachable (${detail}). For Ollama: run "ollama serve". Cloud endpoints need host permission — the browser will ask when saving.`;
+    } catch (e) {
+        if (st) st.textContent = "Test failed: " + (e?.message || e);
+    }
+};

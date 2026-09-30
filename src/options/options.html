@@ -26,7 +26,32 @@ hr{margin:24px 0}
 <button id="clearLearned">Forget all learned corrections</button>
 <hr>
 <label><input type="checkbox" id="autoFill"> Auto-fill forms on load (you still review + submit)</label>
+<label><input id="fillGenerative" type="checkbox"> Draft cover letters / "why are you a fit?" answers from my resume
+    (local draft, always review)</label>
+<hr>
+<label>Disabled websites (<span id="disabledCount">0</span>)</label>
+<p class="hint">Autofill never runs on these sites. Add a domain like <b>example.com</b> (also covers jobs.example.com).
+    Fastest: open the site → toolbar icon → Disable on this site.</p>
+<div style="display:flex;gap:8px"><input id="disabledInput" placeholder="example.com" style="flex:1" type="text">
+    <button id="addDisabled" style="margin-top:0">Add</button>
+</div>
+<div class="hint" id="disabledList">Not disabled anywhere.</div>
+<hr>
 <button id="save">Save settings</button> <span id="status"></span>
+<hr>
+<h3>Optional AI (off by default)</h3>
+<p class="hint">Local drafts above need no network. Enable this ONLY if you want longer AI-drafted answers via your own
+    model. Your resume text is sent to <b>your</b> endpoint only — never to us (we have no server).</p>
+<label><input id="useLLM" type="checkbox"> Use my own AI endpoint for free-text fields</label>
+<label>Endpoint (OpenAI-compatible base URL)</label>
+<input (Ollama) https: id="llmUrl" or placeholder=http://localhost:11434 type="text"//openrouter.ai/api/v1">
+<label>Model</label>
+<input id="llmModel" placeholder="llama3.1  or  inclusionai/ling-3.0-flash-vl (OpenRouter)" type="text">
+<label>API key (only for cloud endpoints like OpenRouter; leave empty for local Ollama)</label>
+<input id="llmKey" placeholder="optional" type="password">
+<div>
+    <button id="testLLM">Test AI connection</button>
+    <span class="hint" id="llmStatus"></span></div>
 <script src="../lib/vendor/pdf.js"></script>
 <script src="../lib/vendor/mammoth.browser.min.js"></script>
 <script src="../lib/profile.js"></script>

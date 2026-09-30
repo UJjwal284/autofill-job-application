@@ -19,6 +19,30 @@ Save your resume once. Job application forms fill themselves. Correct any field 
 
 `test-page.html` (repo root, never packaged) is a fake job form for trying it out.
 
+## Why some sites failed before (fixed)
+
+Old filler only read the visible `<label>` text and knew ~15 field types, so it missed:
+
+- cryptic ATS names (`fname`, `job_application[first_name]`, `data-automation-id`),
+- `autocomplete` / `aria-labelledby` / placeholder-only labels (Workday, Greenhouse, Lever, Ashby),
+- fields inside shadow DOM, iframes, or rendered late by React (SPA),
+- React-controlled inputs (setting `.value` without the native setter + events is ignored),
+- `<select>`, radio groups, date inputs, contenteditable editors,
+- cover-letter / "why are you a fit?" boxes (nothing to copy — needs drafting).
+
+New behavior: every field is scored against **all** signals (label, name, id, placeholder,
+`autocomplete`, `aria`, `data-automation-id`) across 40+ field types in several languages; fills use the React-safe
+native setter; shadow DOM + iframes + late-rendered SPA fields are observed and filled; cover/why-fit boxes get a local
+draft you review (or your own AI model, below).
+
+## Optional AI (off by default)
+
+Built-in drafting is 100% local and always available. If you want longer AI-drafted cover letters, enable **Settings →
+Optional AI**: point it at your own model — local Ollama (`http://localhost:11434`, model e.g. `llama3.1`) or any
+OpenAI-compatible endpoint + key. Your resume text is sent only to *your* endpoint, never to us (we operate no server).
+Enabling cloud endpoints will prompt for host permission; local Ollama needs none beyond localhost. AI output is always
+inserted as an editable draft — review before submitting.
+
 ## Privacy
 
 - Resume text, profile, settings, and learned corrections live only in Firefox `storage.local` on your machine.
@@ -32,7 +56,11 @@ Save your resume once. Job application forms fill themselves. Correct any field 
 | `storage` | Save your resume profile, settings, and per-site corrections locally |
 | Content scripts on all URLs | Detect and fill job forms wherever they appear |
 
-No `host_permissions`, no `activeTab`, no `scripting`, no remote code. PDF/DOCX parsing uses vendored local libraries (`pdfjs-dist 3.4.120`, `mammoth 1.12.3`, see `src/lib/vendor/`). That is why `web-ext lint` reports `DANGEROUS_EVAL` warnings for those vendored files only. Two further benign warnings note that `data_collection_permissions` is only honored on Firefox 140+ (older versions harmlessly ignore it; `strict_min_version` stays at 109 for broad support).
+No `host_permissions`, no `activeTab`, no `scripting`, no remote code. PDF/DOCX parsing uses vendored local libraries
+(`pdfjs-dist 3.4.120`, `mammoth 1.12.3`, see `src/lib/vendor/`). That is why `web-ext lint` reports `DANGEROUS_EVAL`
+warnings for those vendored files only. Further benign warnings note that `data_collection_permissions` (Firefox 140+)
+and `optional_host_permissions` (Firefox 128+) are ignored on older versions; `strict_min_version` stays at 109 for
+broad support (the optional-AI endpoint feature simply stays dormant there).
 
 ## Scripts
 
