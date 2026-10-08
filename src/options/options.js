@@ -53,7 +53,17 @@ async function refreshAll() {
   const ping = await storeGet("__ping");
   if (!ping || ping.__ping === undefined) throw new Error("storage.local set/get failed (private window? addon removed instead of Reloaded? page opened as file?).");
   await storeRemove("__ping").catch(() => {});
-  const { settings, profile, learned } = await storeGet(["settings", "profile", "learned"]);
+    const {settings, profile, learned: rawLearned} = await storeGet(["settings", "profile", "learned"]);
+    let learned = rawLearned || {};
+    // Migrate legacy per-site keys to global keys once, then persist.
+    try {
+        if (globalThis.ResumeAutofill?.migrateLearned && Object.keys(learned).some(k => k.includes("||"))) {
+            const {store: next, changed} = globalThis.ResumeAutofill.migrateLearned(learned);
+            learned = next;
+            if (changed) await storeSet({learned});
+        }
+    } catch {
+    }
   const s = settings || {};
   // Guarded: old cached HTML may lack new IDs. Never let one missing node kill the whole page.
   if ($("autoFill")) $("autoFill").checked = s.autoFill !== false;
@@ -167,12 +177,17 @@ function renderLearned(learned) {
   if ($("learnedCount")) $("learnedCount").textContent = String(entries.length);
   const list = $("learnedList");
   if (!list) return;
-  if (!entries.length) { list.textContent = "Nothing learned yet. Correct any autofilled field on a job form and it appears here."; return; }
+    if (!entries.length) {
+        list.textContent = "Nothing learned yet. Correct any autofilled field on a job form once and it applies on all sites.";
+        return;
+    }
   list.innerHTML = "";
-  for (const [, v] of entries.slice(0, 50)) {
+    for (const [k, v] of entries.slice(0, 50)) {
     const div = document.createElement("div");
     div.style.cssText = "background:#fff;border:1px solid #ddd;border-radius:6px;padding:6px 8px;margin:4px 0";
-    div.textContent = `${v.domain} | "${v.label}": ${(v.value || "").slice(0, 80)} (${v.count}x)`;
+        const scope = k.startsWith("field::") ? `field: ${k.slice(7)}` : "custom";
+        const origins = [...(v.domains || []), v.domain].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).slice(0, 3).join(", ");
+        div.textContent = `"${v.label || v.fieldKey || k}": ${(v.value || "").slice(0, 80)} (${v.count || 1}x, ${scope}${origins ? ` · learned on ${origins}` : ""} · used everywhere)`;
     list.appendChild(div);
   }
 }
@@ -302,11 +317,13 @@ if (testLLMBtn) testLLMBtn.onclick = async () => {
     const st = $("llmStatus");
     try {
         if (st) st.textContent = "Testing…";
-        const url = ($("llmUrl")?.value || "").trim().replace(/\/$/, "");
-        if (!url) {
+        const rawUrl = ($("llmUrl")?.value || "").trim();
+        if (!rawUrl) {
             if (st) st.textContent = "Set the endpoint URL first.";
             return;
         }
+        // Same joining rule as the filler: don't double "/v1" when the base already ends with it.
+        const url = rawUrl.replace(/\/+$/, "").replace(/\/chat\/completions$/i, "").replace(/\/v1$/i, "") || rawUrl;
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 10000);
         // Prefer OpenAI-compatible /v1/models; fall back to Ollama /api/tags.

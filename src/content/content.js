@@ -1,4 +1,4 @@
-/* Content script: detect + fill job forms, LEARN from manual corrections per site.
+/* Content script: detect + fill job forms, LEARN globally (one fix applies on ALL sites).
  * Hardened: shadow DOM, ATS quirks, React-safe fills, SPA late-render, custom widgets.
  * Local-first: profile.js brain does the mapping. Optional BYO LLM (llm.js) only
  * for generative free-text fields and only when the user enabled it.
@@ -13,6 +13,21 @@
 
   async function getState() {
     const store = await extApi.storage.local.get(["profile", "settings", "learned"]);
+      let learned = store.learned || {};
+      // One-time (idempotent) migration: legacy per-site "domain||label" keys -> global keys.
+      try {
+          const B = Brain();
+          if (B?.migrateLearned) {
+              const needsMigration = Object.keys(learned).some(k => k.includes("||"));
+              const needsDomains = Object.values(learned).some(v => v && typeof v === "object" && !Array.isArray(v.domains));
+              if (needsMigration || needsDomains) {
+                  const {store: next, changed} = B.migrateLearned(learned);
+                  learned = next;
+                  if (changed) await extApi.storage.local.set({learned});
+              }
+          }
+      } catch { /* migration must never block filling */
+      }
     return {
       profile: store.profile || null,
         settings: Object.assign({
@@ -25,7 +40,7 @@
             llmKey: "",
             disabledSites: []
         }, store.settings || {}),
-      learned: store.learned || {}
+        learned
     };
   }
 
@@ -38,8 +53,15 @@
     };
 
   const domain = () => { try { return new URL(location.href).hostname.replace(/^www\./, ""); } catch { return location.host; } };
-  const normLabel = (s) => (s || "").toLowerCase().replace(/[*:\-–—()[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
-  const learnKey = (d, label) => `${d}||${normLabel(label)}`;
+    // Global learning: keys are NOT scoped by domain. normLearnLabel lives in the
+    // shared brain (profile.js) so content + options + tests all key identically.
+    const normLabel = (s) => {
+        try {
+            if (Brain()?.normLearnLabel) return Brain().normLearnLabel(s);
+        } catch {
+        }
+        return (s || "").toLowerCase().replace(/[*:\-–—()[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+    };
 
     // ---------- field discovery (incl. shadow DOM) ----------
 
@@ -368,22 +390,34 @@
             if (SKIP_RE.test(hay)) continue;
             if (!sig.label && !sig.name && !sig.id) continue;
 
-            // 1st priority: your past correction on this site.
-            const keys = [learnKey(d, sig.label), learnKey(d, sig.name), learnKey(d, sig.id), learnKey(d, sig.testId)].filter(k => k.split("||")[1]);
-            const hitKey = keys.find(k => learned[k]?.value);
-            if (hitKey) {
+            const a = Brain().analyzeField(sig, profile);
+            if (a.skip) continue;
+
+            // 1st priority: your past correction — learned once, applied on ALL sites.
+            let hit = null;
+            try {
+                hit = Brain()?.lookupLearned
+                    ? Brain().lookupLearned(learned, sig, a)
+                    : null;
+            } catch {
+                hit = null;
+            }
+            // Fallback when the brain is unavailable: direct global label keys.
+            if (!hit) {
+                const keys = [sig.label, sig.name, sig.id, sig.testId].map(normLabel).filter(Boolean).map(l => `label::${l}`);
+                const hitKey = keys.find(k => learned[k]?.value);
+                if (hitKey) hit = {key: hitKey, entry: learned[hitKey]};
+            }
+            if (hit) {
                 // For radio groups learned values apply to the right button via fillCheckRadio.
-                const ok = nativeFill(el, learned[hitKey].value);
+                const ok = nativeFill(el, hit.entry.value);
                 if (ok !== false) {
-                    paint(el, "learned", `Filled from your past correction on ${d} (${learned[hitKey].count}x). Edit to re-teach.`);
+                    paint(el, "learned", `Filled from your correction (${hit.entry.count || 1}x, applies on all sites). Edit to re-teach.`);
                     filled++;
                     fromLearned++;
                 }
                 continue;
             }
-
-            const a = Brain().analyzeField(sig, profile);
-            if (a.skip) continue;
             const value = await resolveValue(a, sig, profile, settings);
             // Never overwrite user-typed content on auto-pass; manual re-fill may.
             const cur = elValue(el).trim();
@@ -401,9 +435,9 @@
                     filled++;
                 }
             } else if (manual && a.key !== "unknown") {
-                paint(el, "low", `No resume data for "${sig.label}" (${a.key}). Type it once and I'll learn it for ${d}.`);
+                paint(el, "low", `No resume data for "${sig.label}" (${a.key}). Type it once and I'll learn it everywhere.`);
             } else if (a.key === "unknown" && manual) {
-                paint(el, "low", `Couldn't map "${sig.label}". Type the answer once and I'll learn it for ${d}.`);
+                paint(el, "low", `Couldn't map "${sig.label}". Type the answer once and I'll learn it everywhere.`);
             }
         } catch (e) {
             console.warn("[autofill] fill field failed:", e);
@@ -413,20 +447,23 @@
     if (manual || filled > 0) {
       const extra = fromLearned ? ` (${fromLearned} from your corrections)` : "";
         const gen = generated ? ` · ${generated} drafted — review` : "";
-        showToast(`Autofilled ${filled}/${fields.length}${extra}${gen}. Fix anything wrong and I learn it for ${d}.`);
+        showToast(`Autofilled ${filled}/${fields.length}${extra}${gen}. Fix anything wrong once and I learn it everywhere.`);
     }
     return { filled, total: fields.length, fromLearned };
   }
 
     // ---- Learning: real user edits only (isTrusted=true skips our own fills). ----
+    // GLOBAL: one correction is stored under a site-independent key and reused everywhere.
   let saveTimer = null;
+    let pendingLearned = null;
+    let pendingEl = null;
   document.addEventListener("change", async (e) => {
     try {
         if (!e.isTrusted) return;
       const el = e.target;
       if (!el || !/INPUT|TEXTAREA|SELECT/.test(el.tagName)) return;
         if (["hidden", "submit", "button", "password", "file"].includes(el.type)) return;
-      const { settings, learned } = await getState();
+        const {settings, learned, profile} = await getState();
         if (isDisabledOn(settings)) return;
       if (settings.learnFromEdits === false) return;
         const sig = collectSignals(el);
@@ -435,29 +472,55 @@
       const value = elValue(el).trim();
       if (!value || value.length > 3000) return;
       const d = domain();
-        const key = learnKey(d, sig.label) || learnKey(d, sig.name || sig.id);
-      if (!key.split("||")[1]) return;
+        // Classify the field so "First name" / "fname" / "Vorname" all share one global key.
+        let fieldKey = "";
+        try {
+            if (profile) fieldKey = Brain()?.analyzeField(sig, profile)?.key || "";
+        } catch {
+            fieldKey = "";
+        }
+        if (fieldKey === "skip" || fieldKey === "unknown") fieldKey = "";
+        let key = "";
+        try {
+            key = Brain()?.learnKeyFor ? Brain().learnKeyFor(fieldKey, sig.label || sig.name || sig.id || sig.testId) : "";
+        } catch {
+            key = "";
+        }
+        if (!key) key = `label::${normLabel(sig.label || sig.name || sig.id || sig.testId)}`;
+        if (!key.split("::")[1]) return;
       const prev = learned[key];
         if (prev?.value === value) return;
         learned[key] = {
             value,
-            label: (sig.label || sig.name).slice(0, 80),
+            fieldKey,
+            label: (sig.label || sig.name || sig.id || "").slice(0, 80),
             domain: d,
+            domains: [...new Set([...(prev?.domains || []), ...(prev?.domain ? [prev.domain] : []), d].filter(Boolean))].slice(0, 20),
             count: (prev?.count || 0) + 1,
             updatedAt: new Date().toISOString()
         };
+        pendingLearned = learned;
+        pendingEl = el;
       clearTimeout(saveTimer);
       saveTimer = setTimeout(async () => {
-        await extApi.storage.local.set({ learned });
           try {
-              el.title = `Learned ✓. I'll reuse this on ${d}`;
-              const before = el.style.background;
-              el.style.background = HIGHLIGHT.learned;
-              setTimeout(() => {
-                  if (el.style.background === HIGHLIGHT.learned) el.style.background = before;
-              }, 1200);
+              if (pendingLearned) await extApi.storage.local.set({learned: pendingLearned});
           } catch {
           }
+          try {
+              const pel = pendingEl;
+              if (pel?.isConnected) {
+                  pel.title = `Learned ✓. I'll reuse this on all sites`;
+                  const before = pel.style.background;
+                  pel.style.background = HIGHLIGHT.learned;
+              setTimeout(() => {
+                  if (pel.style.background === HIGHLIGHT.learned) pel.style.background = before;
+              }, 1200);
+              }
+          } catch {
+          }
+          pendingLearned = null;
+          pendingEl = null;
       }, 400);
     } catch (err) { console.warn("[autofill] learn failed:", err); }
   }, true);
@@ -492,14 +555,36 @@
           return {ok: true, fields: collectFields().length, disabled: isDisabledOn(settings), domain: domain()};
       })();
     if (msg?.type === "FORGET_SITE") {
+        // Legacy name: entries are global now, so this forgets corrections first
+        // learned on this site (tracked via entry.domain / entry.domains).
       return (async () => {
         const { learned } = await getState();
-        const d = domain(), prefix = d + "||";
+          const d = domain();
         let n = 0;
-        for (const k of Object.keys(learned)) if (k.startsWith(prefix)) { delete learned[k]; n++; }
+          for (const k of Object.keys(learned)) {
+              const v = learned[k];
+              if (k.startsWith(d + "||")) {
+                  delete learned[k];
+                  n++;
+                  continue;
+              }
+              const origins = [...(v?.domains || []), v?.domain].filter(Boolean);
+              if (origins.includes(d)) {
+                  delete learned[k];
+                  n++;
+              }
+          }
         await extApi.storage.local.set({ learned });
         return { forgotten: n };
       })();
+    }
+      if (msg?.type === "FORGET_ALL") {
+          return (async () => {
+              const {learned} = await getState();
+              const n = Object.keys(learned).length;
+              await extApi.storage.local.set({learned: {}});
+              return {forgotten: n};
+          })();
     }
   });
 

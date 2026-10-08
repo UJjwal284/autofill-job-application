@@ -5,14 +5,19 @@
 
 const ResumeAutofill = (() => {
   const SKILLS_LEXICON = [
-    "javascript","typescript","python","java","go","rust","c++","c#","sql","react","reactjs","angular","vue",
-    "node","node.js","express","django","flask","spring","spring boot","aws","ec2","vpc","iam","s3","rds","cloudwatch","route 53",
+      "javascript", "typescript", "python", "java", "go", "rust", "c++", "c#", "sql", "react", "reactjs", "angular", "angularjs", "vue",
+      "node", "node.js", "express", "rest api", "rest apis", "django", "flask", "spring", "spring boot", "aws", "ec2", "vpc", "iam", "s3", "rds", "alb", "application load balancer", "auto scaling", "cloudfront", "waf", "route 53", "cloudwatch",
     "azure","gcp","docker","kubernetes","openshift","helm","terraform","jenkins","git","linux",
-      "postgresql", "postgres", "mysql", "mongodb", "redis", "oracle db", "ollama", "chromadb", "rag", "vector databases", "ci/cd", "sre", "observability",
+      "postgresql", "postgres", "mysql", "mongodb", "redis", "oracle", "oracle db", "ollama", "chromadb", "rag", "vector databases", "sentence transformers", "fastapi", "prompt engineering", "ci/cd", "sre", "observability",
+      "airflow", "mlflow", "spark", "jupyterhub", "jupyter", "gradle", "maven",
     "selenium","playwright","figma","photoshop","excel","salesforce","hubspot","sap",
       "machine learning", "deep learning", "nlp", "data analysis", "data science", "project management", "agile", "scrum", "communication",
     "leadership","customer service","marketing","seo","accounting","autocad","matlab"
   ];
+
+    function escapeRegExp(s) {
+        return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
 
     // ---------------- resume parsing ----------------
 
@@ -33,12 +38,23 @@ const ResumeAutofill = (() => {
       };
   }
 
+    function titleCaseName(s) {
+        // Resumes often print the name in ALL CAPS ("UJJWAL PRATAP RATNAKAR").
+        // Autofill must insert "Ujjwal", not "UJJWAL".
+        return String(s || "").toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+    }
+
   function extractName(lines, email) {
     for (let i = 0; i < Math.min(lines.length, 8); i++) {
       const l = lines[i].trim();
       if (!l || l.length > 40 || /\d/.test(l)) continue;
         if (/resume|curriculum|c\.?v\.?|profile|bewerbung/i.test(l)) continue;
-      if (/^[\w.'-]+\s+[\w.'-]+(\s+[\w.'-]+){0,2}$/.test(l)) return l;
+        if (/^[\w.'-]+\s+[\w.'-]+(\s+[\w.'-]+){0,2}$/.test(l)) {
+            // ALL-CAPS header name -> Title Case; mixed case stays untouched.
+            const letters = l.replace(/[^A-Za-z]/g, "");
+            if (letters && letters === letters.toUpperCase()) return titleCaseName(l);
+            return l;
+        }
     }
     if (email) {
       const part = email.split("@")[0].replace(/[._-]+/g, " ").trim();
@@ -56,8 +72,17 @@ const ResumeAutofill = (() => {
     }
 
   function extractSkills(text) {
-    const lower = text.toLowerCase();
-    return SKILLS_LEXICON.filter(s => lower.includes(s));
+      // Word-boundary matching: plain includes() false-positives on substrings
+      // ("figma" inside "ConfigMaps", "git" inside "GitHub", "go" inside "Django").
+      const lower = ` ${String(text || "").toLowerCase().replace(/[\s_]+/g, " ")} `;
+      return SKILLS_LEXICON.filter(s => {
+          const tail = /\w$/.test(s) ? "\\b" : "";
+          try {
+              return new RegExp(`\\b${escapeRegExp(s)}${tail}`).test(lower);
+          } catch {
+              return lower.includes(s);
+          }
+      });
   }
 
   function extractYears(text) {
@@ -66,8 +91,19 @@ const ResumeAutofill = (() => {
   }
 
     function extractAddress(text) {
-        // "City, ST", "City, Country", "Street 12, 10115 Berlin", ZIP...
-        const locMatch = text.match(/([A-Z][a-z\u00C0-\u024F]+(?:\s+[A-Z][a-z\u00C0-\u024F]+)?,\s*(?:[A-Z]{2}|[A-Z][a-z\u00C0-\u024F]+(?:\s+[A-Z][a-z\u00C0-\u024F]+)?))/) || null;
+        // Prefer a real location line ("Gurgaon, Haryana, India") over any
+        // "City, X" substring. Line-based search avoids gluing fragments
+        // across newlines ("GitHub\nGurgaon, Haryana" -> bogus "Hub\nGurgaon").
+        const lines = String(text || "").split("\n").map(s => s.trim()).filter(Boolean);
+        const lineLoc = lines.find(l =>
+            l.length < 60 &&
+            !/[@|•\u2022]/.test(l) &&
+            /^\s*[A-Z][A-Za-z\u00C0-\u024F.'-]*(?:\s+[A-Z][A-Za-z\u00C0-\u024F.'-]*)?,\s*(?:[A-Z]{2}|[A-Z][A-Za-z\u00C0-\u024F.'-]*(?:\s+[A-Z][A-Za-z\u00C0-\u024F.'-]*)?)(?:,\s*[A-Z][A-Za-z\u00C0-\u024F.'-]*(?:\s+[A-Z][A-Za-z\u00C0-\u024F.'-]*)?)?\s*$/.test(l)
+        ) || "";
+        // "City, ST", "City, Region, Country" — leading \b so "Hub" in "GitHub" can't match.
+        const locMatch = lineLoc
+            ? [lineLoc, lineLoc]
+            : (text.match(/\b([A-Z][a-z\u00C0-\u024F]+(?:\s+[A-Z][a-z\u00C0-\u024F]+)?,\s*(?:[A-Z]{2}|[A-Z][a-z\u00C0-\u024F]+(?:\s+[A-Z][a-z\u00C0-\u024F]+)?)(?:,\s*[A-Z][a-z\u00C0-\u024F]+(?:\s+[A-Z][a-z\u00C0-\u024F]+)?)?)/) || null);
         // ZIP only in address context (avoid grabbing years like 2021).
         const zipMatch = text.match(/\b\d{5}\b(?=.*(?:Berlin|Germany|street|address|zip|postal|plz))/is)
             || text.match(/\b\d{5}(?:\s*[-–]\s*\d{3,4})?\b.*(?:street|address|zip|postal|plz)/is)
@@ -75,20 +111,104 @@ const ResumeAutofill = (() => {
         const streetMatch = text.match(/^.*\b\d{1,5}\s+[A-Z][a-z]+\s+(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Weg|Stra\u00DFe|Str\.|Gasse)\b.*$/mi) || null;
         // Real countries only — never cities, never "Remote".
         const countryMatch = text.match(/\b(Germany|Deutschland|France|Spain|Italy|Netherlands|Poland|Austria|Switzerland|United States|USA|United Kingdom|UK|Canada|India)\b/i) || null;
+        const loc = (locMatch ? locMatch[1] || locMatch[0] : "").replace(/\s+/g, " ").trim();
         return {
-            location: locMatch ? locMatch[0].trim() : "",
-            city: locMatch ? locMatch[1].split(",")[0].trim() : "",
+            location: loc,
+            city: loc ? loc.split(",")[0].trim() : "",
             zip: zipMatch ? zipMatch[0].trim() : "",
             street: streetMatch ? streetMatch[0].trim().slice(0, 120) : "",
             country: countryMatch ? countryMatch[0].trim() : ""
         };
     }
 
+    function sectionText(text, names) {
+        // Slice a resume section: from "EDUCATION" header to the next ALL-CAPS header.
+        const lines = String(text || "").split("\n");
+        const isHeader = (l) => /^[A-Z][A-Z\s&/|-]{3,}$/.test(l.trim()) && l.trim().length < 60;
+        let start = -1;
+        for (let i = 0; i < lines.length; i++) {
+            const t = lines[i].trim().toUpperCase();
+            if (names.some(n => t === n || t.startsWith(n + " ") || t.startsWith(n + " |"))) {
+                start = i;
+                break;
+            }
+        }
+        if (start < 0) return "";
+        const out = [];
+        for (let i = start + 1; i < lines.length; i++) {
+            if (isHeader(lines[i])) break;
+            out.push(lines[i]);
+        }
+        return out.join("\n").trim();
+    }
+
     function extractEducation(text) {
-        const degree = (text.match(/\b(B\.?Sc\.?|M\.?Sc\.?|Bachelor|Master|MBA|Ph\.?D|Diplom|B\.?Eng|M\.?Eng|B\.?A\.|M\.?A\.)\b[^,\n]{0,60}/i) || [])[0] || "";
-        const uni = (text.match(/\b(University|Universit\u00E4t|Hochschule|College|Institute|School)\b[^,\n]{0,60}/i) || [])[0] || "";
-        const gradYear = (text.match(/\b(19|20)\d{2}\b/g) || []).slice(-3).join(", ");
-        return {degree: degree.trim().slice(0, 120), university: uni.trim().slice(0, 120), gradYear};
+        const degree = (text.match(/\b(B\.?Sc\.?|M\.?Sc\.?|B\.?Tech|Bachelor|Master|MBA|Ph\.?D|Diplom|B\.?Eng|M\.?Eng|B\.?A\.|M\.?A\.)\b[^,\n]{0,60}/i) || [])[0] || "";
+        // Institution: whole segment so "Chandigarh Group of Colleges, ..." survives
+        // (matching from the keyword alone would return just "Colleges").
+        let university = "";
+        const uniLine = String(text).split("\n").find(l => /\b(universit(y|ies|\u00E4t)|hochschule|colleges?|institutes?|schools?)\b/i.test(l));
+        if (uniLine) {
+            const seg = uniLine.split("|").map(s => s.trim()).find(s => /\b(universit(y|ies|\u00E4t)|hochschule|colleges?|institutes?|schools?)\b/i.test(s)) || uniLine.trim();
+            university = seg;
+        }
+        // Graduation year only counts inside the EDUCATION section — work-history
+        // dates ("Apr 2024 - Present") are not graduation years.
+        const eduSection = sectionText(text, ["EDUCATION", "ACADEMIC BACKGROUND", "AUSBILDUNG"]);
+        const eduYears = eduSection.match(/\b(19|20)\d{2}\b/g) || [];
+        return {
+            degree: degree.trim().slice(0, 120),
+            university: university.trim().slice(0, 120),
+            gradYear: eduYears.slice(-1).join(", ")
+        };
+    }
+
+    function extractCurrentRole(text) {
+        // 1) "Title at Company, dates" (also "bei", "@").
+        const atMatch = String(text).match(/^(.{2,60}?)\s+(?:at|bei|@)\s+(.{2,60}?)(?:,|\s+(?:19|20)\d{2}|\n)/im);
+        if (atMatch) return {title: atMatch[1].trim().slice(0, 80), company: atMatch[2].trim().slice(0, 80)};
+        const lines = String(text).split("\n").map(s => s.trim());
+        const dateRe = /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(?:19|20)\d{2}\s*[-–—|to]+\s*(?:Present|now|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(?:19|20)\d{2}|(?:19|20)\d{2})/i;
+        for (let i = 0; i < lines.length; i++) {
+            const l = lines[i];
+            if (!dateRe.test(l)) continue;
+            const pipes = l.split("|").map(s => s.trim()).filter(Boolean);
+            const prev = (lines[i - 1] || "").split("|")[0].trim();
+            const prevLooksTitle = prev && prev.length <= 80 && !/,/.test(prev) && !dateRe.test(prev) &&
+                !/^(experience|summary|skills|education|projects?|certifications?)\b/i.test(prev);
+            // 2) Single-line pipe format: "Title | Company, Loc | Date range".
+            if (pipes.length >= 3) {
+                return {
+                    title: pipes[0].slice(0, 80),
+                    company: pipes[1].split(",")[0].trim().slice(0, 80)
+                };
+            }
+            if (pipes.length === 2) {
+                const secondIsDate = dateRe.test(pipes[1]) || /present|now|(?:19|20)\d{2}/i.test(pipes[1]);
+                if (secondIsDate) {
+                    // "Company, Loc | dates" with the title on the previous line, else "Title | dates".
+                    if (/,/.test(pipes[0]) && prevLooksTitle) {
+                        return {title: prev.slice(0, 80), company: pipes[0].split(",")[0].trim().slice(0, 80)};
+                    }
+                    if (!/,/.test(pipes[0]) && prevLooksTitle && /,/.test(l)) {
+                        return {title: prev.slice(0, 80), company: pipes[0].split(",")[0].trim().slice(0, 80)};
+                    }
+                    return {title: pipes[0].slice(0, 80), company: ""};
+                }
+                return {
+                    title: pipes[0].slice(0, 80),
+                    company: pipes[1].split(",")[0].trim().slice(0, 80)
+                };
+            }
+            // 3) Two-line format: title on the previous line, "Company, Loc | dates" here.
+            if (prevLooksTitle) {
+                return {
+                    title: prev.slice(0, 80),
+                    company: l.split("|")[0].split(",")[0].trim().slice(0, 80)
+                };
+            }
+        }
+        return {title: "", company: ""};
     }
 
     /** Main entry: raw resume text -> profile object. Pure local. */
@@ -102,19 +222,18 @@ const ResumeAutofill = (() => {
     const yearsExperience = extractYears(text);
         const addr = extractAddress(text);
         const edu = extractEducation(text);
-    const summary = lines.slice(0, 12).join(" ").slice(0, 800);
+        // Summary: the PROFESSIONAL SUMMARY section, not the name/contact header.
+        // Falls back to the old first-lines heuristic when no section exists.
+        const summarySection = sectionText(text, ["PROFESSIONAL SUMMARY", "SUMMARY", "PROFIL", "KURZPROFIL", "ÜBER MICH", "ABOUT ME"]);
+        const summary = (summarySection || lines.slice(0, 12).join(" ")).replace(/\s+/g, " ").trim().slice(0, 800);
 
     const work = [];
     const expLines = text.split(/\n/).filter(l => /\b(19|20)\d{2}\b/.test(l)).slice(0, 5);
     for (const l of expLines) work.push({ raw: l.slice(0, 200) });
 
-        // Best-effort current title/company: "Title at Company, dates"
-        let currentTitle = "", currentCompany = "";
-        const atMatch = text.match(/^(.{2,60}?)\s+(?:at|bei|@)\s+(.{2,60}?)(?:,|\s+(?:19|20)\d{2}|\n)/im);
-        if (atMatch) {
-            currentTitle = atMatch[1].trim().slice(0, 80);
-            currentCompany = atMatch[2].trim().slice(0, 80);
-        }
+        // Best-effort current title/company: "Title at Company", "Title | Company | dates",
+        // or title on the line above "Company, Loc | dates".
+        const {title: currentTitle, company: currentCompany} = extractCurrentRole(text);
 
     return {
         version: 2,
@@ -502,6 +621,121 @@ const ResumeAutofill = (() => {
         return false;
   }
 
+    // ---------------- global learning (applies on ALL sites, not per-site) ----------------
+    // Learned corrections are keyed globally so one fix teaches every site:
+    //   - known fields  -> "field::<fieldKey>"  (e.g. "field::firstName" covers
+    //     "First name", "fname", "Vorname" everywhere, since they all analyze to firstName)
+    //   - unknown fields -> "label::<normalized label>" (fallback when the brain
+    //     cannot map the field to a known key)
+    // Old installs stored per-site keys "domain||label"; migrateLearned() folds
+    // those into the global keys (latest value wins, counts summed).
+
+    function normLearnLabel(s) {
+        return norm(s).slice(0, 80);
+    }
+
+    function globalFieldKey(fieldKey) {
+        return `field::${String(fieldKey || "").trim()}`;
+    }
+
+    function globalLabelKey(label) {
+        return `label::${normLearnLabel(label)}`;
+    }
+
+    function learnKeyFor(fieldKey, fallbackLabel) {
+        const fk = String(fieldKey || "").trim();
+        if (fk && fk !== "unknown" && fk !== "skip") return globalFieldKey(fk);
+        return globalLabelKey(fallbackLabel || "");
+    }
+
+    function ensureDomains(entry, domain) {
+        const set = new Set(Array.isArray(entry.domains) ? entry.domains : []);
+        if (entry.domain) set.add(entry.domain);
+        if (domain) set.add(domain);
+        return [...set].slice(0, 20);
+    }
+
+    /** Fold legacy per-site keys ("domain||label") into global keys. Mutates + returns the store. */
+    function migrateLearned(learned) {
+        const store = learned || {};
+        let changed = false;
+        const merged = {};
+        for (const [k, v] of Object.entries(store)) {
+            if (!v || typeof v !== "object") continue;
+            if (k.includes("||")) {
+                // legacy: "domain||label"
+                const labelPart = k.split("||").slice(1).join("||");
+                const nk = globalLabelKey(v.label || labelPart);
+                if (!nk.split("::")[1]) continue;
+                const prev = merged[nk];
+                const curTime = v.updatedAt || "";
+                const prevTime = prev?.updatedAt || "";
+                if (!prev || curTime >= prevTime) {
+                    merged[nk] = {
+                        value: v.value,
+                        fieldKey: v.fieldKey || "",
+                        label: (v.label || labelPart || "").slice(0, 80),
+                        domain: v.domain || k.split("||")[0] || "",
+                        domains: [...new Set([...(prev?.domains || v.domains || []), ...(v.domains || []), ...(prev?.domain ? [prev.domain] : []), ...(v.domain ? [v.domain] : []), k.split("||")[0]].filter(Boolean))].slice(0, 20),
+                        count: (prev?.count || 0) + (v.count || 1),
+                        updatedAt: v.updatedAt || prev?.updatedAt || new Date().toISOString()
+                    };
+                } else {
+                    prev.count = (prev.count || 0) + (v.count || 1);
+                    prev.domains = [...new Set([...(prev.domains || []), ...(v.domains || []), v.domain].filter(Boolean))].slice(0, 20);
+                }
+                changed = true;
+            } else {
+                // already global (or unexpected): keep, backfill domains array
+                if (!merged[k]) merged[k] = v;
+                else {
+                    // duplicate global key: latest wins, counts summed
+                    const prev = merged[k];
+                    const curTime = v.updatedAt || "";
+                    const prevTime = prev?.updatedAt || "";
+                    const winner = curTime >= prevTime ? v : prev;
+                    const loser = curTime >= prevTime ? prev : v;
+                    merged[k] = {
+                        ...winner,
+                        count: (winner.count || 0) + (loser.count || 0),
+                        domains: ensureDomains({
+                            ...winner,
+                            domains: [...(winner.domains || []), ...(loser.domains || []), loser.domain].filter(Boolean)
+                        }, "")
+                    };
+                    changed = true;
+                }
+                if (!Array.isArray(merged[k].domains)) {
+                    merged[k].domains = ensureDomains(merged[k], "");
+                    changed = true;
+                }
+            }
+        }
+        if (!changed) return {store, changed: false};
+        for (const k of Object.keys(store)) delete store[k];
+        Object.assign(store, merged);
+        return {store, changed: true};
+    }
+
+    /** Global lookup: field key first (generalizes across labels), then label fallbacks. */
+    function lookupLearned(learned, sig, analysis) {
+        const store = learned || {};
+        const sigObj = sig || {};
+        // 1) field-keyed (strongest generalization: one fix covers all labels mapping to same field)
+        const fk = analysis?.key;
+        if (fk && fk !== "unknown" && fk !== "skip") {
+            const e = store[globalFieldKey(fk)];
+            if (e?.value) return {key: globalFieldKey(fk), entry: e};
+        }
+        // 2) label-keyed fallbacks (covers unknown fields + pre-migration entries)
+        const cands = [sigObj.label, sigObj.name, sigObj.id, sigObj.testId].map(globalLabelKey).filter(k => k.split("::")[1]);
+        for (const k of cands) {
+            const e = store[k];
+            if (e?.value) return {key: k, entry: e};
+        }
+        return null;
+    }
+
     return {
         parseResumeText,
         mapLabelToProfile,
@@ -510,6 +744,12 @@ const ResumeAutofill = (() => {
         humanizeToken,
         normalizeDomain,
         isSiteDisabled,
+        normLearnLabel,
+        globalFieldKey,
+        globalLabelKey,
+        learnKeyFor,
+        migrateLearned,
+        lookupLearned,
         FIELD_RULES
     };
 })();

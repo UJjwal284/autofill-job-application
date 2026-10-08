@@ -36,9 +36,12 @@ api?.runtime?.onMessage?.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "LLM_CHAT") {
     (async () => {
       try {
-        const {settings} = await api.storage.local.get("settings");
-        if (!settings?.useLLM || !settings.llmUrl) return sendResponse({text: null});
-        const endpoint = settings.llmUrl.trim().replace(/\/$/, "") + "/v1/chat/completions";
+          const {settings} = await api.storage.local.get("settings");
+          if (!settings?.useLLM || !settings.llmUrl) return sendResponse({text: null});
+          let base = settings.llmUrl.trim().replace(/\/+$/, "").replace(/\/chat\/completions$/i, "");
+          const endpoint = /\/v1$/i.test(base)
+              ? base + "/chat/completions"
+              : base + "/v1/chat/completions";
         const headers = {"Content-Type": "application/json"};
         if (settings.llmKey) headers.Authorization = "Bearer " + settings.llmKey;
         // OpenRouter (openrouter.ai) is OpenAI-compatible; these optional headers are

@@ -5,11 +5,20 @@
  * so the caller falls back to the local template composer.
  */
 const ResumeLLM = (() => {
+    // Join base URL + OpenAI-compatible suffix without doubling "/v1".
+    // Accepts "http://localhost:11434", "https://openrouter.ai/api/v1",
+    // or even a pasted full "…/v1/chat/completions".
+    function apiUrl(base, suffix) {
+        let b = String(base || "").trim().replace(/\/+$/, "").replace(/\/chat\/completions$/i, "");
+        if (/\/v1$/i.test(b) && /^\/v1\//i.test(suffix)) return b + suffix.slice(3);
+        return b + suffix;
+    }
+
     async function directFetch(settings, messages, maxTokens) {
         const url = (settings.llmUrl || "").trim();
         const model = (settings.llmModel || "").trim() || "llama3.1";
         if (!url) return null;
-        const endpoint = url.replace(/\/$/, "") + "/v1/chat/completions";
+        const endpoint = apiUrl(url, "/v1/chat/completions");
         const headers = {"Content-Type": "application/json"};
         if (settings.llmKey) headers.Authorization = "Bearer " + settings.llmKey;
         // OpenRouter (openrouter.ai) is OpenAI-compatible; these optional headers are

@@ -1,6 +1,7 @@
 # Resume Autofill for Job Applications (Firefox)
 
-Save your resume once. Job application forms fill themselves. Correct any field once and the extension learns your fix for that site.
+Save your resume once. Job application forms fill themselves. Correct any field once and the extension learns your fix
+everywhere.
 
 **100% local.** No account, no server, no analytics, no network calls. Your resume never leaves your browser (`storage.local`).
 
@@ -15,7 +16,7 @@ Save your resume once. Job application forms fill themselves. Correct any field 
 1. Toolbar icon → **Upload / edit resume** (opens Settings; uploading must happen there because popups close when the file picker opens).
 2. Upload PDF / DOCX / TXT / MD / HTML, or paste resume text, → **Save resume → build profile**.
 3. Open any job form → it fills itself. Hit **Fill this form now** in the popup to re-run.
-4. Fix anything wrong directly in the form. Your correction is remembered per site and wins next time.
+4. Fix anything wrong directly in the form. Your correction is remembered globally and wins on all sites next time.
 
 `test-page.html` (repo root, never packaged) is a fake job form for trying it out.
 
@@ -51,10 +52,10 @@ inserted as an editable draft — review before submitting.
 
 ## Permissions (and why)
 
-| Permission | Why |
-|---|---|
-| `storage` | Save your resume profile, settings, and per-site corrections locally |
-| Content scripts on all URLs | Detect and fill job forms wherever they appear |
+| Permission                  | Why                                                                |
+|-----------------------------|--------------------------------------------------------------------|
+| `storage`                   | Save your resume profile, settings, and global corrections locally |
+| Content scripts on all URLs | Detect and fill job forms wherever they appear                     |
 
 No `host_permissions`, no `activeTab`, no `scripting`, no remote code. PDF/DOCX parsing uses vendored local libraries
 (`pdfjs-dist 3.4.120`, `mammoth 1.12.3`, see `src/lib/vendor/`). That is why `web-ext lint` reports `DANGEROUS_EVAL`

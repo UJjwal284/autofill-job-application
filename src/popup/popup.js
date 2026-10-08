@@ -94,8 +94,24 @@ $("siteToggle").onclick = async () => {
 $("forget").onclick = async () => {
   const [tab] = await extApi.tabs.query({ active: true, currentWindow: true });
   try {
-    const r = await extApi.tabs.sendMessage(tab.id, { type: "FORGET_SITE" });
-    $("status").textContent = `Forgot ${r?.forgotten ?? 0} learned fix(es) on this site.`;
-  } catch { $("status").textContent = "Could not reach this page."; }
+      // Global learning: one store for all sites, so forgetting clears everything.
+      let r = null;
+      try {
+          r = await extApi.tabs.sendMessage(tab.id, {type: "FORGET_ALL"});
+      } catch {
+          r = await extApi.tabs.sendMessage(tab.id, {type: "FORGET_SITE"});
+      }
+      $("status").textContent = `Forgot ${r?.forgotten ?? 0} learned fix(es) everywhere.`;
+  } catch {
+      // Page unreachable (e.g. about: pages): clear storage directly.
+      try {
+          const {learned} = await extApi.storage.local.get("learned");
+          const n = Object.keys(learned || {}).length;
+          await extApi.storage.local.set({learned: {}});
+          $("status").textContent = `Forgot ${n} learned fix(es) everywhere.`;
+      } catch {
+          $("status").textContent = "Could not reach this page.";
+      }
+  }
 };
 refresh().catch(e => { $("status").textContent = "Load error: " + (e?.message || e); });
